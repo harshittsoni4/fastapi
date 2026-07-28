@@ -1,15 +1,22 @@
+from annotated_types import T
 from fastapi import Depends, FastAPI ,HTTPException , Response
-from random import randint
+# from random import randint
+from pydantic import BaseModel
 from datetime import datetime,timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Generic, TypeVar
 from fastapi.concurrency import asynccontextmanager
 from sqlmodel import Field, create_engine,SQLModel,Session, select
 
 class Campaign(SQLModel,table=True):
+  
     campaign_id:int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     due_date: datetime |None = Field(default=None,index=True)
     created_at : datetime = Field(default_factory=lambda: datetime.now(timezone.utc),nullable=True,index=True)
+
+class CampaignCreate(SQLModel):
+    name:str
+    due_date:datetime | None=None
 
 sqlite_file_name="database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -62,14 +69,26 @@ data : Any =[{
         "due date": datetime.now(),
         "created_at":datetime.now()
 }]
-@app.get("/campaigns") #getting all data
+T=TypeVar("T")
+class Response(BaseModel,Generic[T]):
+        data:T
+
+@app.get("/campaigns",response_model=Response[list[Campaign]]) #getting all data
 async def read_capmpaigns(session:SessionDep):
     data=session.exec(select(Campaign)).all()
-    return {"campaign":data}
+    return {"data":data}
 
 # @app.get("/campaigns") #getting all data
 # async def read_capmpaigns():
 #     return {"campaign":data}
+
+@app.get("/campaigns/{id}",response_model=Response[Campaign])
+async def read_campaign(id:int,session:SessionDep):
+    data = session.get(Campaign,id)
+    if not data:
+        raise HTTPException(status_code=404)
+    return {"data":data}
+
 # @app.get("/campaigns/{id}") #getting data by id
 # async def read_camp(id:int):
 #     for campaign in data:
@@ -88,6 +107,13 @@ async def read_capmpaigns(session:SessionDep):
 #     }
 #     data.append(new)
 #     return {"campaign":new}
+@app.post("/campaign/{id}",status_code=201,response_model=Response[Campaign])
+async def create_campaign(campaign:CampaignCreate,session:SessionDep):
+    db_campaign=Campaign.model_validate(campaign)
+    session.add(db_campaign)
+    session.commit()
+    session.refresh(db_campaign)
+    return {"data":db_campaign}
 
 # @app.put("/campaigns/{id}",) #updating data by id
 # async def update_campaign(id:int, body: dict[str,Any]):
@@ -103,8 +129,24 @@ async def read_capmpaigns(session:SessionDep):
 #             data[index]=updated
 #             return {"campaign":updated}
 #     raise HTTPException(status_code=404)
-
-
+@app.put("/campaign/{id}",response_model=Response[Campaign])
+async def update_campaign(id:int,campaign:CampaignCreate,session:SessionDep):
+    data=session.get(Campaign,id)
+    if not data:
+        raise HTTPException(status_code=404)
+    data.name=campaign.name
+    data.due_date = campaign.due_date
+    session.add(data)
+    session.commit()
+    session.refresh(data)
+    return {"data":data}
+@app.delete("/camapigns/{id}",status_code=204)
+async def delete_campaign(id:int,session:SessionDep):
+    data =session.get(Campaign,id)
+    if not data:
+        raise HTTPException(status_code=404)
+    session.delete(data)
+    session.commit()
 # @app.delete("/campaigns/{id}",) #deleting data by id
 # async def delete_campaign(id:int):
 #     for index,campaign in enumerate(data):
