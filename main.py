@@ -1,9 +1,9 @@
 from annotated_types import T
-from fastapi import Depends, FastAPI ,HTTPException , Response
+from fastapi import Depends, FastAPI ,HTTPException , Response,Query
 # from random import randint
 from pydantic import BaseModel
 from datetime import datetime,timezone
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar,List
 from fastapi.concurrency import asynccontextmanager
 from sqlmodel import Field, create_engine,SQLModel,Session, select
 
@@ -39,10 +39,12 @@ async def lifespan(app:FastAPI):
     create_db_and_tables()
     with Session(engine) as session:
         if not session.exec(select(Campaign)).first():
-            session.add_all([
+            mockdata=[
                 Campaign(name="hArshit",due_date=datetime.now()),
                 Campaign(name="vaibhavi",due_date=datetime.now())
-            ])
+            ]
+            campaign_to_insert=[Campaign(**data) for data in mockdata]
+            session.add_all(campaign_to_insert)
             session.commit()
     yield
 
@@ -74,8 +76,12 @@ class Response(BaseModel,Generic[T]):
         data:T
 
 @app.get("/campaigns",response_model=Response[list[Campaign]]) #getting all data
-async def read_capmpaigns(session:SessionDep):
-    data=session.exec(select(Campaign)).all()
+async def read_capmpaigns(session:SessionDep,page:int =Query(1,ge=1),page_size :int = Query (20,ge=1)):
+    limit =page_size
+    offset = (page-1) * limit
+
+    print(page)
+    data=session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()#type is ignore
     return {"data":data}
 
 # @app.get("/campaigns") #getting all data
@@ -107,6 +113,30 @@ async def read_campaign(id:int,session:SessionDep):
 #     }
 #     data.append(new)
 #     return {"campaign":new}
+@app.post("/campaigns/bulk",response_model=List[Campaign],status_code=201)
+# async def create_multiple(campaigns: List[CampaignCreate],session:SessionDep):
+#     session.add_all(campaigns)
+#     session.commit()
+#     for campaign in campaigns:
+#         session.refresh(campaign)
+#         return campaigns
+@app.post("/api/v1/campaigns/bulk", response_model=List[Campaign]) 
+async def create_campaigns_bulk(campaigns_in: List[CampaignCreate], session: SessionDep):
+    db_campaigns = []
+    for camp_in in campaigns_in:
+        db_campaign = Campaign.model_validate(camp_in)
+        session.add(db_campaign)
+        db_campaigns.append(db_campaign)
+        
+    session.commit()
+    
+    # Refresh to get the generated IDs from the database (optional but recommended)
+    for camp in db_campaigns:
+        session.refresh(camp)
+    
+    # Return the list of objects, not the dictionary
+    return db_campaigns
+    
 @app.post("/campaign/{id}",status_code=201,response_model=Response[Campaign])
 async def create_campaign(campaign:CampaignCreate,session:SessionDep):
     db_campaign=Campaign.model_validate(campaign)
