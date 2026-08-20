@@ -1,11 +1,11 @@
 from annotated_types import T
-from fastapi import Depends, FastAPI ,HTTPException , Response,Query
+from fastapi import Depends,Request, FastAPI ,HTTPException , Response,Query
 # from random import randint
 from pydantic import BaseModel
 from datetime import datetime,timezone
-from typing import Annotated, Any, Generic, TypeVar,List
+from typing import Annotated, Any, Generic, Optional, TypeVar,List
 from fastapi.concurrency import asynccontextmanager
-from sqlmodel import Field, create_engine,SQLModel,Session, select
+from sqlmodel import Field, create_engine,SQLModel,Session, func, select
 
 class Campaign(SQLModel,table=True):
   
@@ -74,15 +74,36 @@ data : Any =[{
 T=TypeVar("T")
 class Response(BaseModel,Generic[T]):
         data:T
-
-@app.get("/campaigns",response_model=Response[list[Campaign]]) #getting all data
-async def read_capmpaigns(session:SessionDep,page:int =Query(1,ge=1),page_size :int = Query (20,ge=1)):
+      
+class paginatedresponse(BaseModel,Generic[T]):
+    data:T
+    next: Optional[str]
+    previous: Optional[str]
+    # count: int
+@app.get("/campaigns",response_model=paginatedresponse[list[Campaign]]) #getting all data
+async def read_capmpaigns(request:Request,session:SessionDep,page:int =Query(1,ge=1),page_size :int = Query (20,ge=1)):
     limit =page_size
     offset = (page-1) * limit
 
     print(page)
     data=session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()#type is ignore
-    return {"data":data}
+    base_url=str(request.url).split('?')[0]
+    # total =session.exec(select(func.count()).select_from(Campaign)).one()
+    # if offset +limit <total:
+    next_url = f"{base_url}?page={page+1}&page_size={limit}"
+    # else:
+    #     next_url =None
+
+    # if page >1:
+    prev_url=f"{base_url}?page={page-1}&page_size={limit}"
+    # else:
+    #     prev_url=None
+    # print(base_url)
+    return {
+        "next":next_url,
+        "previous":prev_url,
+        # "count":total,
+        "data":data}
 
 # @app.get("/campaigns") #getting all data
 # async def read_capmpaigns():
