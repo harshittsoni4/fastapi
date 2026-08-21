@@ -1,6 +1,6 @@
 import base64
 import json
-import binascii
+
 from annotated_types import T
 from fastapi import Depends,Request, FastAPI ,HTTPException , Response,Query
 # from random import randint
@@ -9,6 +9,12 @@ from datetime import datetime,timezone
 from typing import Annotated, Any, Generic, Optional, TypeVar,List
 from fastapi.concurrency import asynccontextmanager
 from sqlmodel import Field, create_engine,SQLModel,Session, func, select
+from slowapi import Limiter,_rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func= get_remote_address)
+
 
 class Campaign(SQLModel,table=True):
   
@@ -52,6 +58,8 @@ async def lifespan(app:FastAPI):
     yield
 
 app =FastAPI(root_path="/api/v1",lifespan=lifespan)
+app.state.limiter=limiter
+app.add_exception_handler(RateLimitExceeded,_rate_limit_exceeded_handler)
 # fastapi dev main.py
 # app = FastAPI(root_path="/api/v1")
 @app.get("/") #main route
@@ -106,7 +114,9 @@ def decode_cursor(cursor:str):
 
 
 @app.get("/campaigns",response_model=paginatedresponse[list[Campaign]]) #getting all data
+@limiter.limit("5/second")
 async def read_capmpaigns(request:Request,session:SessionDep,cursor:Optional[str] = Query(None),limit:int = Query (20,ge=1)):
+
     cursor_id=0
     if cursor:
         cursor_id= decode_cursor(cursor)
