@@ -1,3 +1,6 @@
+import base64
+import json
+import binascii
 from annotated_types import T
 from fastapi import Depends,Request, FastAPI ,HTTPException , Response,Query
 # from random import randint
@@ -9,7 +12,7 @@ from sqlmodel import Field, create_engine,SQLModel,Session, func, select
 
 class Campaign(SQLModel,table=True):
   
-    campaign_id:int | None = Field(default=None, primary_key=True)
+    campaign_id:int = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     due_date: datetime |None = Field(default=None,index=True)
     created_at : datetime = Field(default_factory=lambda: datetime.now(timezone.utc),nullable=True,index=True)
@@ -78,32 +81,67 @@ class Response(BaseModel,Generic[T]):
 class paginatedresponse(BaseModel,Generic[T]):
     data:T
     next: Optional[str]
-    previous: Optional[str]
+    # previous: Optional[str]
     # count: int
+
+def encode_cursor(value):
+    raw =json.dumps({"id":value})
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+def decode_cursor(cursor:str):
+    if not cursor:
+        return None
+    try:
+        cursor = cursor.rstrip('=')
+        padded_cursor=cursor + '='*((4- len(cursor)%4)%4)
+
+        raw = base64.urlsafe_b64decode(padded_cursor.encode()).decode()
+        payload =json.loads(raw)
+        return payload.get("id")
+    
+    except Exception as e:
+        print(f"Error decoding cursor: {e}")
+        raise HTTPException(status_code=400,detail="Invalid pagination cursor")
+    
+
+
 @app.get("/campaigns",response_model=paginatedresponse[list[Campaign]]) #getting all data
-async def read_capmpaigns(request:Request,session:SessionDep,page:int =Query(1,ge=1),page_size :int = Query (20,ge=1)):
-    limit =page_size
-    offset = (page-1) * limit
+async def read_capmpaigns(request:Request,session:SessionDep,cursor:Optional[str] = Query(None),limit:int = Query (20,ge=1)):
+    cursor_id=0
+    if cursor:
+        cursor_id= decode_cursor(cursor)
 
-    print(page)
-    data=session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()#type is ignore
-    base_url=str(request.url).split('?')[0]
-    # total =session.exec(select(func.count()).select_from(Campaign)).one()
-    # if offset +limit <total:
-    next_url = f"{base_url}?page={page+1}&page_size={limit}"
-    # else:
-    #     next_url =None
+    
+   
+    data =session.exec(select(Campaign).order_by(Campaign.campaign_id).where(Campaign.campaign_id>cursor_id).limit(limit+1)).all()
+    base_url =str(request.url).split('?')[0]
+   
+    if len(data) >limit:
+        next_cursor= encode_cursor(data[:limit][-1].campaign_id)
+        next_url =f"{base_url}?cursor={next_cursor}&limit={limit}"
+    else:
+        next_url=None
+  
 
-    # if page >1:
-    prev_url=f"{base_url}?page={page-1}&page_size={limit}"
+
+
+
+       # data=session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()#type is ignore
+    # base_url=str(request.url).split('?')[0]
+    # # total =session.exec(select(func.count()).select_from(Campaign)).one()
+    # next_url = f"{base_url}?offset={offset+limit}&limit={limit}"
+    
+
+    # if offset >0:
+    #     prev_url=f"{base_url}?offset={max(0, offset-limit  )}&limit={limit}"
     # else:
     #     prev_url=None
     # print(base_url)
     return {
         "next":next_url,
-        "previous":prev_url,
+        # "previous":prev_url,
         # "count":total,
-        "data":data}
+        "data":data[:limit]}
 
 # @app.get("/campaigns") #getting all data
 # async def read_capmpaigns():
